@@ -43,7 +43,7 @@ MyWindowX::~MyWindowX() {
 }
 
 void MyWindowX::Create(LPCSTR className, LPCSTR windowName, HINSTANCE instance,
-                       int width, int height, int x, int y, HWND parent, LPVOID data) const {
+                       HWND parent, LPVOID data, int width, int height, int x, int y) const {
     auto tmp = CreateWindowEx(
         0, className, windowName, WS_OVERLAPPEDWINDOW,
         x, y, width, height, parent, nullptr, instance, data

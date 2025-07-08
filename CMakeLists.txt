@@ -6,13 +6,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(EXPORT_COMPILE_COMMANDS ON)
 
 file(GLOB SOURCES "source/*.cpp")
+link_directories(${CMAKE_SOURCE_DIR}/lib)
 
 set(CMAKE_AR gcc-ar)
-set(CMAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS} "-static-libstdc++ -static-libgcc")
+set(CMAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS})
 
-add_library(MyWinAPIL STATIC ${SOURCES} library.cpp)
+add_library(MyWinAPIL SHARED ${SOURCES})
 
 target_include_directories(MyWinAPIL PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(MyWinAPIL PRIVATE MyThreadPool)
 
 # Main configurations
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")

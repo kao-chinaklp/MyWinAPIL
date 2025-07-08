@@ -12,7 +12,7 @@ class MyWindowX {
         ~MyWindowX();
 
         void Create(LPCSTR className, LPCSTR windowName, HINSTANCE instance,
-                    int width=800, int height=600, int x=CW_USEDEFAULT, int y=CW_USEDEFAULT, HWND parent, LPVOID data) const;
+                    HWND parent, LPVOID data, int width=800, int height=600, int x=CW_USEDEFAULT, int y=CW_USEDEFAULT) const;
         void Destroy();
 
     protected:
