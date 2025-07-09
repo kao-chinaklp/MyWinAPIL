@@ -29,11 +29,9 @@ class MyWindowX {
         void Register() const;
         void Unregister() const;
 
-        int handleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) const;
+        LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, void (*Function)(void *), void *data=nullptr);
 
-        LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-
-        void update() const;
+        void Update() const;
 
     private:
         class MyWindowXImpl;

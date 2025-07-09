@@ -1,13 +1,13 @@
 #include "MyWindowX.h"
-
-#include <MyWindowX.h>
+#include "MyLogger.h"
 
 class MyWindowX::MyWindowXImpl {
     public:
         MyWindowXImpl(LPCSTR className, LPCSTR windowName, HINSTANCE instance,
                       int width=800, int height=600, int x=CW_USEDEFAULT, int y=CW_USEDEFAULT)
             : className(className), windowName(windowName) ,hInstance(instance) {
-            hwnd = nullptr;
+            hwnd=nullptr;
+            logger=MyLogger::Create("log.txt");
         }
 
         ~MyWindowXImpl()=default;
@@ -19,12 +19,16 @@ class MyWindowX::MyWindowXImpl {
 
         void setHandle(HWND handle) {hwnd = handle;}
 
+        void log(const LogLevel level, const std::string& msg) const {logger->WriteLog(level, msg);}
+
     private:
         HWND hwnd; // 窗口句柄
         HINSTANCE hInstance; //程序实例句柄
         LPCSTR className; // 窗口类名
         LPCSTR windowName; // 窗口标题
         RECT windowRect{}; // 窗口大小和位置
+
+        std::unique_ptr<MyLogger, MyLogger::Deleter> logger;
 };
 
 MyWindowX::MyWindowX(LPCSTR className, LPCSTR windowName, HINSTANCE instance) {
@@ -51,12 +55,17 @@ void MyWindowX::Create(LPCSTR className, LPCSTR windowName, HINSTANCE instance,
 
     impl->setHandle(tmp);
 
-    if (impl->getHandle()==nullptr)
-        MessageBoxEx(nullptr, "Failed to create window", "Error", MB_OK | MB_ICONERROR, 0);
+    if(impl->getHandle()==nullptr) {
+        impl->log(LogLevel::Fatal, "Failed to create window: " + std::to_string(GetLastError()));
+        MessageBoxEx(nullptr, "Failed to create window", "Fatal", MB_OK | MB_ICONERROR, 0);
+    }
+    else
+        impl->log(LogLevel::Info, "Window created successfully.");
 }
 
 void MyWindowX::Destroy() {
     if (impl->getHandle()!=nullptr) {
+        impl->log(LogLevel::Debug, "Destroying window.");
         DestroyWindow(impl->getHandle());
         impl->setHandle(nullptr);
     }
@@ -96,34 +105,28 @@ void MyWindowX::Register() const {
     wc.lpszClassName=impl->getClassName();
     wc.hbrBackground=reinterpret_cast<HBRUSH>((COLOR_WINDOW + 1)); // 设置背景颜色
 
-    if(!RegisterClassEx(&wc))
-        MessageBoxEx(nullptr, "Failed to register window class", "Error", MB_OK | MB_ICONERROR, 0);
+    if(!RegisterClassEx(&wc)) {
+        impl->log(LogLevel::Fatal, "Failed to register window class.");
+        MessageBoxEx(nullptr, "Failed to register window class", "Fatal", MB_OK | MB_ICONERROR, 0);
+    }
 }
 
 void MyWindowX::Unregister() const {
-    if(!UnregisterClass(impl->getClassName(), impl->getInstance()))
-        MessageBoxEx(nullptr, "Failed to unregister window class", "Error", MB_OK | MB_ICONERROR, 0);
-}
-
-int MyWindowX::handleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) const {
-    // to do
-    return 0; // 返回值可以根据需要进行修改
-}
-
-LRESULT CALLBACK MyWindowX::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    std::shared_ptr<MyWindowX> tObj=nullptr;
-
-    if(uMsg==WM_CREATE) {
-        tObj=std::make_shared<MyWindowX>(this->getClassName(), this->getWindowName(), static_cast<HINSTANCE>(reinterpret_cast<LPCREATESTRUCT>(lParam)->lpCreateParams));
-        // 设置窗口的用户数据为当前对象
-        tObj->setHandle(hwnd);
-        ::SetWindowLongPtrA(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(tObj.get()));
+    if(!UnregisterClass(impl->getClassName(), impl->getInstance())) {
+        impl->log(LogLevel::Fatal, "Failed to unregister window class.");
+        MessageBoxEx(nullptr, "Failed to unregister window class", "Fatal", MB_OK | MB_ICONERROR, 0);
     }
-    tObj=std::make_shared<MyWindowX>(this->getClassName(), this->getWindowName(), reinterpret_cast<HINSTANCE>(::GetWindowLongPtrA(hwnd, GWLP_USERDATA)));
+}
+
+LRESULT CALLBACK MyWindowX::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, void (*Function)(void *), void *data) {
+    std::shared_ptr<MyWindowX> tObj=nullptr;
 
     switch(uMsg) {
         case WM_CREATE:
-            tObj->handleMessage(hwnd, uMsg, wParam, lParam);
+            tObj=std::make_shared<MyWindowX>(this->getClassName(), this->getWindowName(), static_cast<HINSTANCE>(reinterpret_cast<LPCREATESTRUCT>(lParam)->lpCreateParams));
+            // 设置窗口的用户数据为当前对象
+            tObj->setHandle(hwnd);
+            ::SetWindowLongPtrA(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(tObj.get()));
             break;
 
         case WM_DESTROY:
@@ -132,21 +135,14 @@ LRESULT CALLBACK MyWindowX::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
             break;
 
         default:
-            tObj=std::make_shared<MyWindowX>(this->getClassName(), this->getWindowName(), reinterpret_cast<HINSTANCE>(::GetWindowLongPtrA(hwnd, GWLP_USERDATA)));
-            if(tObj!=nullptr) {
-                if(tObj->handleMessage(hwnd, uMsg, wParam, lParam)==0) {
-                    return DefWindowProcA(impl->getHandle(), uMsg, wParam, lParam);
-                }
-                else
-                    return DefWindowProcA(impl->getHandle(), uMsg, wParam, lParam);
-            }
-        break;
+            Function(data);
+            break;
     }
 
     return 0;
 }
 
-void MyWindowX::update() const {
+void MyWindowX::Update() const {
     // 更新窗口内容
     InvalidateRect(impl->getHandle(), nullptr, TRUE);
     UpdateWindow(impl->getHandle());
