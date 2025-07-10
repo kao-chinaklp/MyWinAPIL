@@ -1,23 +1,23 @@
 #include "MyWindowX.h"
-#include "MyLogger.h"
 
 class MyWindowX::MyWindowXImpl {
     public:
         MyWindowXImpl(LPCSTR className, LPCSTR windowName, HINSTANCE instance,
-                      int width=800, int height=600, int x=CW_USEDEFAULT, int y=CW_USEDEFAULT)
-            : className(className), windowName(windowName) ,hInstance(instance) {
+            std::shared_ptr<MyLogger> logger)
+            : className(className), windowName(windowName), hInstance(instance) {
             hwnd=nullptr;
-            logger=MyLogger::Create("log.txt");
+            if (logger==nullptr)
+                this->logger=MyLogger::Create("log.txt");
+            else
+                this->logger=std::move(logger);
         }
 
         ~MyWindowXImpl()=default;
 
-        [[nodiscard]] HWND getHandle() const {return hwnd;}
-        [[nodiscard]] HINSTANCE getInstance() const {return hInstance;}
-        [[nodiscard]] LPCSTR getClassName() const {return className;}
-        [[nodiscard]] LPCSTR getWindowName() const {return windowName;}
-
-        void setHandle(HWND handle) {hwnd = handle;}
+        HWND& getHandle() {return hwnd;}
+        HINSTANCE& getInstance() {return hInstance;}
+        LPCSTR& getClassName() {return className;}
+        LPCSTR& getWindowName() {return windowName;}
 
         void log(const LogLevel level, const std::string& msg) const {logger->WriteLog(level, msg);}
 
@@ -26,13 +26,12 @@ class MyWindowX::MyWindowXImpl {
         HINSTANCE hInstance; //程序实例句柄
         LPCSTR className; // 窗口类名
         LPCSTR windowName; // 窗口标题
-        RECT windowRect{}; // 窗口大小和位置
 
-        std::unique_ptr<MyLogger, MyLogger::Deleter> logger;
+        std::shared_ptr<MyLogger> logger;
 };
 
-MyWindowX::MyWindowX(LPCSTR className, LPCSTR windowName, HINSTANCE instance) {
-    impl=std::make_unique<MyWindowXImpl>(className, windowName, instance);
+MyWindowX::MyWindowX(LPCSTR className, LPCSTR windowName, HINSTANCE instance, std::shared_ptr<MyLogger> logger) {
+    impl=std::make_unique<MyWindowXImpl>(className, windowName, instance, std::move(logger));
 
     // 注册窗口类
     Register();
@@ -53,7 +52,7 @@ void MyWindowX::Create(LPCSTR className, LPCSTR windowName, HINSTANCE instance,
         x, y, width, height, parent, nullptr, instance, data
     );
 
-    impl->setHandle(tmp);
+    impl->getHandle()=tmp;
 
     if(impl->getHandle()==nullptr) {
         impl->log(LogLevel::Fatal, "Failed to create window: " + std::to_string(GetLastError()));
@@ -67,7 +66,7 @@ void MyWindowX::Destroy() {
     if (impl->getHandle()!=nullptr) {
         impl->log(LogLevel::Debug, "Destroying window.");
         DestroyWindow(impl->getHandle());
-        impl->setHandle(nullptr);
+        impl->getHandle()=nullptr; // 清空句柄
     }
 }
 
@@ -88,7 +87,7 @@ LPCSTR MyWindowX::getWindowName() const {
 }
 
 void MyWindowX::setHandle(HWND handle) {
-    impl->setHandle(handle);
+    impl->getHandle()=handle;
 }
 
 void MyWindowX::show(int nCmdShow) const {
@@ -146,4 +145,22 @@ void MyWindowX::Update() const {
     // 更新窗口内容
     InvalidateRect(impl->getHandle(), nullptr, TRUE);
     UpdateWindow(impl->getHandle());
+}
+
+void MyWindowX::messageLoop() const {
+    MSG msg;
+    BOOL bRet=0;
+    // wchar_t str[256];
+    while (true) {
+        bRet=GetMessageW(&msg,nullptr,0,0);
+        if (bRet==0)break; // WM_QUIT
+        else if (bRet==-1) {
+            impl->log(LogLevel::Error, "GetMessage failed: " + std::to_string(GetLastError()));
+            break;
+        }
+        else {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
 }

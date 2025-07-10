@@ -28,7 +28,7 @@ class __declspec(dllimport) MyThreadPool {
                 ui attempt=1;
                 constexpr ui maxAttempts=1000;
                 while(pthread_mutex_trylock(Mutex)!=0&&attempt<maxAttempts)
-                    std::this_thread::sleep_for(std::chrono::microseconds(attempt<<=1)); // 等待锁
+                    std::this_thread::sleep_for(std::chrono::milliseconds(attempt<<=1)); // 等待锁
                 if (attempt>=maxAttempts)std::this_thread::yield(); // 极端情况，阻塞
             }
             ~MutexLocker() {pthread_mutex_unlock(Mutex);}

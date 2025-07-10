@@ -4,11 +4,12 @@
 #include <memory>
 #include <windows.h>
 
+#include "MyLogger.h"
 #include "MyWindowX.h"
 
 class MyWindowX {
     public:
-        MyWindowX(LPCSTR className, LPCSTR windowName, HINSTANCE instance);
+        MyWindowX(LPCSTR className, LPCSTR windowName, HINSTANCE instance, std::shared_ptr<MyLogger> logger=nullptr);
         ~MyWindowX();
 
         void Create(LPCSTR className, LPCSTR windowName, HINSTANCE instance,
@@ -32,6 +33,8 @@ class MyWindowX {
         LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, void (*Function)(void *), void *data=nullptr);
 
         void Update() const;
+
+        void messageLoop() const;
 
     private:
         class MyWindowXImpl;

@@ -14,7 +14,7 @@ set(CMAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS})
 add_library(MyWinAPIL SHARED ${SOURCES})
 
 target_include_directories(MyWinAPIL PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(MyWinAPIL PRIVATE MyThreadPool)
+target_link_libraries(MyWinAPIL PRIVATE MyThreadPool ws2_32)
 
 # Main configurations
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
