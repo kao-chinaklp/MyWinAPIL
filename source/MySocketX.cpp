@@ -1,22 +1,35 @@
 #include "MySocketX.h"
 
+#include <vector>
 #include <ws2tcpip.h>
+
+typedef struct {
+    HANDLE* iocp;
+    void (*Process)(void *);
+}ConnectionData;
+
+typedef struct {
+    std::string message;
+    MySocketX::LPPER_HANDLE_DATA handleData;
+}UserData;
 
 class MySocketX::MySocketXImpl {
     public:
         explicit MySocketXImpl(std::shared_ptr<MyLogger> logger) {
-            if (this->logger == nullptr)
-                this->logger = MyLogger::Create("log.txt");
+            if (this->logger==nullptr)
+                this->logger=MyLogger::Create("log.txt");
             else
-                this->logger = std::move(logger);
+                this->logger=std::move(logger);
 
             SYSTEM_INFO sysInfo;
             GetSystemInfo(&sysInfo);
-            maxWorkers = sysInfo.dwNumberOfProcessors * 2;
-            threadPool = std::make_unique<MyThreadPool>(maxWorkers, 100);
+            maxWorkers=sysInfo.dwNumberOfProcessors * 2;
+            threadPool=std::make_unique<MyThreadPool>(maxWorkers, 100);// 最大线程数为CPU核心数的两倍
 
-            listenSocket = INVALID_SOCKET;
-            clientSocket = INVALID_SOCKET;
+            listenSocket=INVALID_SOCKET;
+            clientSocket=INVALID_SOCKET;
+            socketType=SocketType::client;
+            ipType=IPType::IPv4;
         }
 
         ~MySocketXImpl()=default;
@@ -33,10 +46,11 @@ class MySocketX::MySocketXImpl {
         SocketType& getSocketType()  {return socketType;}
         IPType& getIPType() {return ipType;}
 
-        void Log(LogLevel level, const std::string& msg) {logger->WriteLog(level, msg);}
-        void StartThread(void (*Function())(void*)) {
+        void Log(const LogLevel level, const std::string& msg) {logger->WriteLog(level, msg);}
+        void StartThread(void (*Function)(void*), void (*Process)(void*)) {
+            connections.resize(maxWorkers, {&iocp, Process});
             for (int i=1;i<=maxWorkers;++i)
-                threadPool->PushJob(Function(), &iocp);
+                threadPool->PushJob(Function, &(connections[i-1]));
         }
 
     private:
@@ -56,12 +70,12 @@ class MySocketX::MySocketXImpl {
         IPType ipType;
 
         unsigned maxWorkers;
+        std::vector<ConnectionData> connections;
 };
 
 const std::string MySocketX::eof = "\r\n\r\n"; // 结束符
 
 MySocketX::MySocketX(std::shared_ptr<MyLogger> logger) {
-
     impl=std::make_unique<MySocketXImpl>(std::move(logger));
 }
 
@@ -70,7 +84,8 @@ MySocketX::~MySocketX() {
 }
 
 bool MySocketX::Initialize() {
-    if (WSAStartup(MAKEWORD(2, 2), &impl->getWSAData()) != 0) {
+    // 初始化
+    if (WSAStartup(MAKEWORD(2, 2), &impl->getWSAData())!=0) {
         impl->Log(LogLevel::Fatal, "WSAStartup failed: "+std::to_string(WSAGetLastError()));
 
         return false;
@@ -80,9 +95,10 @@ bool MySocketX::Initialize() {
     return true;
 }
 
-bool MySocketX::Create(ProtocolType protocolType, const std::string& IP, unsigned port,
-    SocketType socketType, IPType ipType) {
+bool MySocketX::Create(const ProtocolType protocolType, const std::string& IP, unsigned port,
+    const SocketType socketType, const IPType ipType) {
 
+    // 服务端实现
     if (socketType==SocketType::server) {
         auto& iocp=impl->getIOCP();
         iocp=CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1);
@@ -101,6 +117,7 @@ bool MySocketX::Create(ProtocolType protocolType, const std::string& IP, unsigne
         }
         impl->Log(LogLevel::Debug, "Socket created successfully.");
 
+        // 绑定地址
         if (ipType==IPType::IPv4) {
             auto& serverAddr=impl->getServerAddr();
             serverAddr.sin_family=AF_INET;
@@ -113,13 +130,9 @@ bool MySocketX::Create(ProtocolType protocolType, const std::string& IP, unsigne
                 return false;
             }
 
-            if (listen(listenSocket, SOMAXCONN)==SOCKET_ERROR) {
-                impl->Log(LogLevel::Fatal, "listen failed: "+std::to_string(WSAGetLastError()));
-                return false;
-            }
-
             impl->Log(LogLevel::Info, "Socket bound successfully("+IP+":"+std::to_string(port)+").");
         }
+
         if (ipType==IPType::IPv6) {
             auto& serverAddr6=impl->getServerAddr6();
             serverAddr6.sin6_family=AF_INET6;
@@ -136,6 +149,7 @@ bool MySocketX::Create(ProtocolType protocolType, const std::string& IP, unsigne
         }
     }
 
+    // 客户端实现
     if (socketType==SocketType::client) {
         if (ipType==IPType::IPv4) {
             auto& clientSocket=impl->getClientSocket();
@@ -173,6 +187,7 @@ bool MySocketX::Create(ProtocolType protocolType, const std::string& IP, unsigne
 }
 
 bool MySocketX::Start(void (*Function)(void *), void* data) {
+    // 服务端实现
     if (impl->getSocketType()==SocketType::server) {
         auto& clientSocket=impl->getClientSocket();
         auto& listenSocket=impl->getListenSocket();
@@ -182,8 +197,9 @@ bool MySocketX::Start(void (*Function)(void *), void* data) {
         HANDLE completionPort=impl->getIOCP();
         DWORD flags=0;
 
-        impl->StartThread(Work);
+        impl->StartThread(Work, Function);
 
+        // 监听端口
         if (listen(impl->getListenSocket(), SOMAXCONN)==SOCKET_ERROR) {
             impl->Log(LogLevel::Fatal, "listen failed: "+std::to_string(WSAGetLastError()));
             return false;
@@ -191,6 +207,7 @@ bool MySocketX::Start(void (*Function)(void *), void* data) {
         impl->Log(LogLevel::Info, "Listening for connections...");
 
         while (true) {
+            // 接受连接
             if (impl->getIPType()==IPType::IPv4)
                 clientSocket=accept(listenSocket, reinterpret_cast<SOCKADDR*>(&impl->getClientAddr()), &clientAddrSize);
             if (impl->getIPType()==IPType::IPv6)
@@ -207,6 +224,7 @@ bool MySocketX::Start(void (*Function)(void *), void* data) {
 
             CreateIoCompletionPort(reinterpret_cast<HANDLE>(clientSocket), completionPort, reinterpret_cast<ULONG_PTR>(handleData), 0);
 
+            // 初始化缓冲区
             lpIoData=static_cast<LPPER_IO_DATA>(malloc(sizeof(PER_IO_DATA)));
             ZeroMemory(&(lpIoData->overlapped), sizeof(WSAOVERLAPPED));
             lpIoData->wsabuf.buf=lpIoData->buffer;
@@ -216,6 +234,7 @@ bool MySocketX::Start(void (*Function)(void *), void* data) {
             lpIoData->socket=clientSocket;
             flags=0;
 
+            // 投递接收请求
             if (WSARecv(clientSocket, &(lpIoData->wsabuf), 1, &(lpIoData->bytesReceived), &flags,
                 &(lpIoData->overlapped), nullptr)==SOCKET_ERROR) {
                 if (WSAGetLastError()!=WSA_IO_PENDING) {
@@ -229,7 +248,9 @@ bool MySocketX::Start(void (*Function)(void *), void* data) {
         }
     }
 
+    // 客户端实现
     if (impl->getSocketType()==SocketType::client) {
+        // 尝试连接
         unsigned Count=0;
         while(++Count<=3) {
             impl->Log(LogLevel::Info, "Trying to connect("+std::to_string(++Count)+")...");
@@ -245,11 +266,13 @@ bool MySocketX::Start(void (*Function)(void *), void* data) {
             std::this_thread::sleep_for(std::chrono::milliseconds(3000));
         }
 
-        if (Count>3)
+        if (Count>3) {
             impl->Log(LogLevel::Error, "Failed to connect after 3 attempts.");
-        else
-            impl->Log(LogLevel::Info, "Connected successfully.");
+            return false;
+        }
+        impl->Log(LogLevel::Info, "Connected successfully.");
 
+        // 数据处理（自定义）
         Function(data);
     }
 
@@ -257,7 +280,7 @@ bool MySocketX::Start(void (*Function)(void *), void* data) {
 }
 
 void MySocketX::Close() {
-    impl->Log(LogLevel::Debug, "Closing socket...");
+    impl->Log(LogLevel::Info, "Closing socket...");
 
     if (impl->getIOCP()!=nullptr) {
         CloseHandle(impl->getIOCP());
@@ -277,105 +300,104 @@ void MySocketX::Close() {
     WSACleanup();
 }
 
-void (*MySocketX::Work())(void*) {
+void MySocketX::Work(void* data) {
     // Demo
+    auto* connectionData=static_cast<ConnectionData *>(data);
 
-    return [](void* data) {
-        HANDLE completionPort=data;
-        DWORD transferredBytes;
-        ULONG_PTR completionKey;
-        LPPER_IO_DATA lpIoData;
-        LPPER_HANDLE_DATA handleData;
-        uint32_t dataSize=0;
+    HANDLE completionPort=connectionData->iocp;
+    DWORD transferredBytes;
+    ULONG_PTR completionKey;
+    LPPER_IO_DATA lpIoData;
+    LPPER_HANDLE_DATA handleData;
+    uint32_t dataSize=0;
 
-        while (true) {
-            const BOOL ok=GetQueuedCompletionStatus(completionPort, &transferredBytes,
-                &completionKey, reinterpret_cast<LPOVERLAPPED*>(&lpIoData), INFINITE);
+    while (true) {
+        const BOOL ok=GetQueuedCompletionStatus(completionPort, &transferredBytes,
+            &completionKey, reinterpret_cast<LPOVERLAPPED *>(&lpIoData), INFINITE);
 
-            handleData=reinterpret_cast<LPPER_HANDLE_DATA>(completionKey);
+        handleData=reinterpret_cast<LPPER_HANDLE_DATA>(completionKey);
 
-            if (lpIoData->bytesReceived<4)continue;
+        if (lpIoData->bytesReceived<4)continue;
 
-            if (!ok) {
-                // 连接错误或关闭
-                impl->Log(LogLevel::Error, "GetQueuedCompletionStatus failed: "+std::to_string(WSAGetLastError()));
-                closesocket(handleData->socket);
-                free(handleData);
-                free(lpIoData);
-                continue;
-            }
+        if (!ok) {
+            // 连接错误或关闭
+            impl->Log(LogLevel::Error, "GetQueuedCompletionStatus failed: "+std::to_string(WSAGetLastError()));
+            closesocket(handleData->socket);
+            free(handleData);
+            free(lpIoData);
+            continue;
+        }
 
-            if (transferredBytes==0) {
-                // 客户端关闭
-                impl->Log(LogLevel::Info, "Client disconnected.");
-                closesocket(handleData->socket);
-                free(handleData);
-                free(lpIoData);
-                continue;
-            }
+        if (transferredBytes==0) {
+            // 客户端关闭
+            impl->Log(LogLevel::Info, "Client disconnected.");
+            closesocket(handleData->socket);
+            free(handleData);
+            free(lpIoData);
+            continue;
+        }
 
-            lpIoData->accumulatedData.insert(
-                lpIoData->accumulatedData.end(),
-                lpIoData->buffer,
-                lpIoData->buffer + transferredBytes);
+        lpIoData->accumulatedData.insert(
+            lpIoData->accumulatedData.end(),
+            lpIoData->buffer,
+            lpIoData->buffer + transferredBytes);
 
-            bool continueProcessing=true;
-            while (continueProcessing) {
-                switch (lpIoData->state) {
-                    case ProcessState::AUTH:
-                        // 这里可以添加认证逻辑
-                        lpIoData->state = ProcessState::PROCESS;
-                        break;
+        bool continueProcessing=true;
+        while (continueProcessing) {
+            switch (lpIoData->state) {
+                case ProcessState::AUTH:
+                    // 这里可以添加认证逻辑
+                    lpIoData->state=ProcessState::PROCESS;
+                    break;
 
-                    case ProcessState::PROCESS:
-                        if (lpIoData->accumulatedData.size()<4) break;
+                case ProcessState::PROCESS:
+                    if (lpIoData->accumulatedData.size()<4) break;
 
-                        // 处理数据
-                        memcpy(&dataSize, lpIoData->accumulatedData.data(), 4);
-                        dataSize=ntohl(dataSize); // 网络字节序转主机字节序
+                    // 处理数据
+                    memcpy(&dataSize, lpIoData->accumulatedData.data(), 4);
+                    dataSize=ntohl(dataSize); // 网络字节序转主机字节序
 
-                        // 检查消息完整性
-                        if (lpIoData->accumulatedData.size()<dataSize+4) break;
+                    // 检查消息完整性
+                    if (lpIoData->accumulatedData.size()<dataSize+4) break;
 
-                        // 处理完整数据
-                        // 这里可以添加处理数据的逻辑
+                    // 处理完整数据
+                    UserData userData={lpIoData->accumulatedData, handleData};
+                    connectionData->Process(&userData); // 自定义处理函数
 
-                        // 移除已处理的数据
-                        lpIoData->accumulatedData.erase(
-                            lpIoData->accumulatedData.begin(),
-                            lpIoData->accumulatedData.begin()+dataSize+4);
-                        break;
+                    // 移除已处理的数据
+                    lpIoData->accumulatedData.erase(
+                        lpIoData->accumulatedData.begin(),
+                        lpIoData->accumulatedData.begin()+dataSize + 4);
+                    break;
 
-                    case ProcessState::CLOSE:
-                        // 客户端关闭
-                        impl->Log(LogLevel::Info, "Client disconnected.");
-                        continueProcessing=false;
-                        closesocket(handleData->socket);
-                        free(handleData);
-                        free(lpIoData);
-                        break;
-                }
-
-                if (lpIoData->state==ProcessState::PROCESS&&lpIoData->accumulatedData.size()<4)
+                case ProcessState::CLOSE:
+                    // 客户端关闭
+                    impl->Log(LogLevel::Info, "Client disconnected.");
                     continueProcessing=false;
-            }
-
-            ZeroMemory(&(lpIoData->overlapped), sizeof(WSAOVERLAPPED));
-            lpIoData->wsabuf.buf=lpIoData->buffer;
-            lpIoData->wsabuf.len=sizeof(lpIoData->buffer);
-
-            DWORD flags=0;
-            DWORD bytesReceived=0;
-
-            if (WSARecv(handleData->socket, &(lpIoData->wsabuf), 1, &bytesReceived,
-                &flags, &(lpIoData->overlapped), nullptr)==SOCKET_ERROR) {
-                if (WSAGetLastError()!=WSA_IO_PENDING) {
-                    impl->Log(LogLevel::Error, "WSARecv failed: "+std::to_string(WSAGetLastError()));
                     closesocket(handleData->socket);
                     free(handleData);
                     free(lpIoData);
-                }
+                    break;
             }
+
+            if (lpIoData->state==ProcessState::PROCESS&&lpIoData->accumulatedData.size()<4)
+                continueProcessing=false;
         }
-    };
+
+        ZeroMemory(&(lpIoData->overlapped), sizeof(WSAOVERLAPPED));
+        lpIoData->wsabuf.buf=lpIoData->buffer;
+        lpIoData->wsabuf.len=sizeof(lpIoData->buffer);
+
+        DWORD flags = 0;
+        DWORD bytesReceived = 0;
+
+        if (WSARecv(handleData->socket, &(lpIoData->wsabuf), 1, &bytesReceived,
+                    &flags, &(lpIoData->overlapped), nullptr) == SOCKET_ERROR)
+            if (WSAGetLastError()!=WSA_IO_PENDING) {
+                impl->Log(LogLevel::Error, "WSARecv failed: "+std::to_string(WSAGetLastError()));
+                closesocket(handleData->socket);
+                free(handleData);
+                free(lpIoData);
+            }
+    }
 }

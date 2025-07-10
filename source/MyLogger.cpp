@@ -5,15 +5,15 @@
 std::fstream MyLogger::logFile;
 std::unique_ptr<MyThreadPool> MyLogger::pool=nullptr;
 
-MyLogger::MyLogger(const std::string& fileName) : fileName(fileName) {
+MyLogger::MyLogger(const std::string& fileName, const bool isDebug) : fileName(fileName), debugMode(isDebug) {
     // Initialize the thread pool with a specified number of workers and maximum jobs
     pool=std::make_unique<MyThreadPool>(4, 100); // Example: 4 workers, max 100 jobs
 
     SetFilename(fileName);
 }
 
-std::unique_ptr<MyLogger, MyLogger::Deleter> MyLogger::Create(const std::string& fileName) {
-    return std::unique_ptr<MyLogger, MyLogger::Deleter>(new MyLogger(fileName));
+std::unique_ptr<MyLogger, MyLogger::Deleter> MyLogger::Create(const std::string& fileName, const bool isDebug) {
+    return std::unique_ptr<MyLogger, MyLogger::Deleter>(new MyLogger(fileName, isDebug));
 }
 
 std::string MyLogger::GetLevelString(const LogLevel level) {

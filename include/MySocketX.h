@@ -40,7 +40,7 @@ class MySocketX {
         static void Close();
 
     private:
-        static void (*Work())(void*);
+        static void Work(void* data);
 
     public:
         typedef struct {
