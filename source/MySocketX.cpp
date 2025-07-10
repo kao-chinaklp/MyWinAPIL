@@ -80,7 +80,7 @@ bool MySocketX::Initialize() {
     return true;
 }
 
-bool MySocketX::Create(ProtocolType protocolType, std::string IP, unsigned port,
+bool MySocketX::Create(ProtocolType protocolType, const std::string& IP, unsigned port,
     SocketType socketType, IPType ipType) {
 
     if (socketType==SocketType::server) {
@@ -108,7 +108,7 @@ bool MySocketX::Create(ProtocolType protocolType, std::string IP, unsigned port,
             serverAddr.sin_port=htons(port);
             inet_pton(AF_INET, IP.c_str(), &serverAddr.sin_addr);
 
-            if (bind(listenSocket, (SOCKADDR*)&serverAddr, sizeof(serverAddr))==SOCKET_ERROR) {
+            if (bind(listenSocket, reinterpret_cast<SOCKADDR *>(&serverAddr), sizeof(serverAddr))==SOCKET_ERROR) {
                 impl->Log(LogLevel::Fatal, "bind failed: "+std::to_string(WSAGetLastError()));
                 return false;
             }
@@ -127,7 +127,7 @@ bool MySocketX::Create(ProtocolType protocolType, std::string IP, unsigned port,
             serverAddr6.sin6_port=htons(port);
             inet_pton(AF_INET6, IP.c_str(), &serverAddr6.sin6_addr);
 
-            if (bind(impl->getListenSocket(), (SOCKADDR*)&serverAddr6, sizeof(serverAddr6))==SOCKET_ERROR) {
+            if (bind(impl->getListenSocket(), reinterpret_cast<SOCKADDR *>(&serverAddr6), sizeof(serverAddr6))==SOCKET_ERROR) {
                 impl->Log(LogLevel::Fatal, "bind failed: "+std::to_string(WSAGetLastError()));
                 return false;
             }
@@ -259,8 +259,6 @@ bool MySocketX::Start(void (*Function)(void *), void* data) {
 void MySocketX::Close() {
     impl->Log(LogLevel::Debug, "Closing socket...");
 
-
-
     if (impl->getIOCP()!=nullptr) {
         CloseHandle(impl->getIOCP());
         impl->getIOCP()=nullptr;
@@ -357,10 +355,10 @@ void (*MySocketX::Work())(void*) {
                         free(lpIoData);
                         break;
                 }
-            }
 
-            if (lpIoData->state==ProcessState::PROCESS&&lpIoData->accumulatedData.size()<4)
-                continueProcessing=false;
+                if (lpIoData->state==ProcessState::PROCESS&&lpIoData->accumulatedData.size()<4)
+                    continueProcessing=false;
+            }
 
             ZeroMemory(&(lpIoData->overlapped), sizeof(WSAOVERLAPPED));
             lpIoData->wsabuf.buf=lpIoData->buffer;

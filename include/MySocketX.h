@@ -33,11 +33,11 @@ class MySocketX {
         explicit MySocketX(std::shared_ptr<MyLogger> logger=nullptr);
         ~MySocketX();
 
-        bool Initialize();
-        bool Create(ProtocolType protocolType, std::string IP, unsigned port,
+        static bool Initialize();
+        static bool Create(ProtocolType protocolType, const std::string& IP, unsigned port,
             SocketType socketType, IPType ipType=IPType::IPv4);
-        bool Start(void (*Function)(void *), void* data=nullptr);
-        void Close();
+        static bool Start(void (*Function)(void *), void* data=nullptr);
+        static void Close();
 
     private:
         static void (*Work())(void*);
