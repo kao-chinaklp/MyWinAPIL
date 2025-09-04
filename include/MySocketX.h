@@ -55,7 +55,7 @@ class MySocketX {
             DWORD bytesSent;
             SOCKET socket;
             std::string accumulatedData;
-            ProcessState state= ProcessState::AUTH;
+            ProcessState state=ProcessState::AUTH;
         }PER_IO_DATA, *LPPER_IO_DATA;
 
         static const std::string eof;

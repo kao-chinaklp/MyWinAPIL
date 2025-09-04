@@ -11,7 +11,8 @@ link_directories(${CMAKE_SOURCE_DIR}/lib)
 set(CMAKE_AR gcc-ar)
 set(CMAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS})
 
-add_library(MyWinAPIL SHARED ${SOURCES})
+#add_library(MyWinAPIL SHARED ${SOURCES})
+add_executable(MyWinAPIL ${SOURCES} mainTest.cpp)
 
 target_include_directories(MyWinAPIL PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(MyWinAPIL PRIVATE MyThreadPool ws2_32)

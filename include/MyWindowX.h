@@ -9,12 +9,14 @@
 
 class MyWindowX {
     public:
-        MyWindowX(LPCSTR className, LPCSTR windowName, HINSTANCE instance, std::shared_ptr<MyLogger> logger=nullptr);
+        MyWindowX(LPCSTR className, LPCSTR windowName, void (*Job)(UINT), HINSTANCE instance=nullptr, std::shared_ptr<MyLogger> logger=nullptr,
+            HWND parent=nullptr, LPVOID data=nullptr, int width=800, int height=600, int x=CW_USEDEFAULT, int y=CW_USEDEFAULT);
         ~MyWindowX();
+        void show(int nCmdShow) const;
 
-        void Create(LPCSTR className, LPCSTR windowName, HINSTANCE instance,
-                    HWND parent, LPVOID data, int width=800, int height=600, int x=CW_USEDEFAULT, int y=CW_USEDEFAULT) const;
         void Destroy();
+
+        void ChangeIcon(const std::string& iconName); // Path to ".ico" file.
 
     protected:
         [[nodiscard]] HWND getHandle() const;
@@ -24,13 +26,17 @@ class MyWindowX {
 
         void setHandle(HWND handle);
 
-        void show(int nCmdShow) const;
+        void getJob(void (*func)(UINT uMsg));
 
     protected:
         void Register() const;
+
+        void Create(LPCSTR className, LPCSTR windowName, HINSTANCE instance,
+                    HWND parent, LPVOID data, int width=800, int height=600, int x=CW_USEDEFAULT, int y=CW_USEDEFAULT) const;
+
         void Unregister() const;
 
-        LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, void (*Function)(void *), void *data=nullptr);
+        static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
         void Update() const;
 

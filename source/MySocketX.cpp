@@ -343,6 +343,8 @@ void MySocketX::Work(void* data) {
             lpIoData->buffer + transferredBytes);
 
         bool continueProcessing=true;
+        UserData userData;
+
         while (continueProcessing) {
             switch (lpIoData->state) {
                 case ProcessState::AUTH:
@@ -361,7 +363,7 @@ void MySocketX::Work(void* data) {
                     if (lpIoData->accumulatedData.size()<dataSize+4) break;
 
                     // 处理完整数据
-                    UserData userData={lpIoData->accumulatedData, handleData};
+                    userData={lpIoData->accumulatedData, handleData};
                     connectionData->Process(&userData); // 自定义处理函数
 
                     // 移除已处理的数据

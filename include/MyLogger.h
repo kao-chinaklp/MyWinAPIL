@@ -18,7 +18,7 @@ enum class LogLevel {
 class MyLogger {
     public:
         struct Deleter {
-            void operator()(const MyLogger* ptr) const {delete ptr;}
+            void operator()(MyLogger* ptr) const {delete ptr;}
         };
         friend struct Deleter;
         MyLogger(const MyLogger&)=delete;
@@ -36,7 +36,7 @@ class MyLogger {
         static std::string CurrentTime();
         static void SetFilename(const std::string& fileName);
 
-        static void (*Write())(void*);
+        static void Write(void* data); // Function to write log messages to file
 
     private:
         static std::unique_ptr<MyThreadPool> pool;

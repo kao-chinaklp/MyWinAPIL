@@ -30,7 +30,7 @@ std::string MyLogger::GetLevelString(const LogLevel level) {
 int MyLogger::WriteLog(const LogLevel level, const std::string& message) {
     const std::string logMessage = CurrentTime() + " [" + GetLevelString(level) + "] " + message;
 
-    pool->PushJob(Write(), new std::string(logMessage));
+    pool->PushJob(Write, new std::string(logMessage));
     return 0; // Return 0 for success
 }
 
@@ -51,14 +51,13 @@ void MyLogger::SetFilename(const std::string& fileName) {
         throw std::runtime_error("Failed to open log file: " + fileName);
 }
 
-void (*MyLogger::Write())(void*) {
-    return [](void* data) {
-        const std::string* logMessage=static_cast<std::string*>(data);
-        if(logFile.is_open()) {
-            logFile<<*logMessage<<std::endl;
-            logFile.flush();
-        }
-        printf("%s\n", logMessage->c_str());
-        delete logMessage; // Clean up the allocated memory
-    };
+void MyLogger::Write(void* data) {
+    const std::string* logMessage=static_cast<std::string*>(data);
+    if(logFile.is_open()) {
+        logFile<<*logMessage<<std::endl;
+        logFile.flush();
+    }
+    printf("%s\n", logMessage->c_str());
+    fflush(stdout);
+    delete logMessage; // Clean up the allocated memory
 }
