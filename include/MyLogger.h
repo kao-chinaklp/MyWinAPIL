@@ -5,7 +5,6 @@
 #include "MyThreadPool.h"
 
 #include <string>
-#include <fstream>
 
 enum class LogLevel {
     Debug,
@@ -18,7 +17,7 @@ enum class LogLevel {
 class MyLogger {
     public:
         struct Deleter {
-            void operator()(MyLogger* ptr) const {delete ptr;}
+            void operator()(MyLogger* ptr) const {fclose(logFile); delete ptr;}
         };
         friend struct Deleter;
         MyLogger(const MyLogger&)=delete;
@@ -42,7 +41,7 @@ class MyLogger {
         static std::unique_ptr<MyThreadPool> pool;
         static Queue<std::string> logQueue; // Thread-safe queue for log messages
         std::string fileName;
-        static std::fstream logFile;
+        static FILE* logFile;
         bool debugMode;
 };
 

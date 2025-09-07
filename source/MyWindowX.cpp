@@ -22,7 +22,7 @@ class MyWindowX::MyWindowXImpl {
 
         void setMessage(UINT message) {uMsg=message;}
 
-        void log(const LogLevel level, const std::string& msg) const {MyLogger::WriteLog(level, msg);}
+        void log(const LogLevel level, const std::string& msg) const {logger->WriteLog(level, msg);}
 
         void runJob() {Function(uMsg);}
 

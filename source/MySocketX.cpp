@@ -24,7 +24,7 @@ class MySocketX::MySocketXImpl {
             SYSTEM_INFO sysInfo;
             GetSystemInfo(&sysInfo);
             maxWorkers=sysInfo.dwNumberOfProcessors * 2;
-            threadPool=std::make_unique<MyThreadPool>(maxWorkers, 100);// 最大线程数为CPU核心数的两倍
+            threadPool=std::make_unique<MyThreadPool>(maxWorkers);// 最大线程数为CPU核心数的两倍
 
             listenSocket=INVALID_SOCKET;
             clientSocket=INVALID_SOCKET;

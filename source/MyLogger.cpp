@@ -2,12 +2,13 @@
 
 #include <iomanip>
 
-std::fstream MyLogger::logFile;
+FILE* MyLogger::logFile=nullptr;
+Queue<std::string> MyLogger::logQueue;
 std::unique_ptr<MyThreadPool> MyLogger::pool=nullptr;
 
 MyLogger::MyLogger(const std::string& fileName, const bool isDebug) : fileName(fileName), debugMode(isDebug) {
     // Initialize the thread pool with a specified number of workers and maximum jobs
-    pool=std::make_unique<MyThreadPool>(4, 100); // Example: 4 workers, max 100 jobs
+    pool=std::make_unique<MyThreadPool>(4); // Example: 4 workers
 
     SetFilename(fileName);
 }
@@ -45,19 +46,13 @@ std::string MyLogger::CurrentTime() {
 }
 
 void MyLogger::SetFilename(const std::string& fileName) {
-    if (logFile.is_open())logFile.close();
-    logFile.open(fileName, std::ios::out | std::ios::app);
-    if (!logFile.is_open())
-        throw std::runtime_error("Failed to open log file: " + fileName);
+    logFile=fopen(fileName.c_str(), "w");
+    if(logFile==nullptr)
+        throw std::runtime_error("Failed to open log file");
 }
 
 void MyLogger::Write(void* data) {
     const std::string* logMessage=static_cast<std::string*>(data);
-    if(logFile.is_open()) {
-        logFile<<*logMessage<<std::endl;
-        logFile.flush();
-    }
+    fprintf(logFile, "%s\n", logMessage->c_str());
     printf("%s\n", logMessage->c_str());
-    fflush(stdout);
-    delete logMessage; // Clean up the allocated memory
 }
