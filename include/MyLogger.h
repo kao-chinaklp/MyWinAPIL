@@ -5,6 +5,7 @@
 #include "MyThreadPool.h"
 
 #include <string>
+#include <memory>
 
 enum class LogLevel {
     Debug,
@@ -17,23 +18,26 @@ enum class LogLevel {
 class MyLogger {
     public:
         struct Deleter {
-            void operator()(MyLogger* ptr) const {fclose(logFile); delete ptr;}
+            void operator()(MyLogger* ptr) const {
+                fclose(logFile);
+                delete ptr;
+            }
         };
         friend struct Deleter;
         MyLogger(const MyLogger&)=delete;
         MyLogger& operator=(const MyLogger&)=delete;
 
     public:
-        static std::unique_ptr<MyLogger, Deleter> Create(const std::string& fileName, bool isDebug=false);
+        static std::shared_ptr<MyLogger> Create(bool isDebug=false);
         static std::string GetLevelString(LogLevel level);
         static int WriteLog(LogLevel level, const std::string& message);
+        static void SetFilename(const std::string& fileName);
 
     private:
-        explicit MyLogger(const std::string& fileName, bool isDebug); // Private constructor to prevent instantiation
+        explicit MyLogger(bool isDebug); // Private constructor to prevent instantiation
         ~MyLogger()=default; // Private destructor
 
         static std::string CurrentTime();
-        static void SetFilename(const std::string& fileName);
 
         static void Write(void* data); // Function to write log messages to file
 

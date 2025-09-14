@@ -6,15 +6,13 @@ FILE* MyLogger::logFile=nullptr;
 Queue<std::string> MyLogger::logQueue;
 std::unique_ptr<MyThreadPool> MyLogger::pool=nullptr;
 
-MyLogger::MyLogger(const std::string& fileName, const bool isDebug) : fileName(fileName), debugMode(isDebug) {
+MyLogger::MyLogger(const bool isDebug) : debugMode(isDebug) {
     // Initialize the thread pool with a specified number of workers and maximum jobs
     pool=std::make_unique<MyThreadPool>(4); // Example: 4 workers
-
-    SetFilename(fileName);
 }
 
-std::unique_ptr<MyLogger, MyLogger::Deleter> MyLogger::Create(const std::string& fileName, const bool isDebug) {
-    return std::unique_ptr<MyLogger, MyLogger::Deleter>(new MyLogger(fileName, isDebug));
+std::shared_ptr<MyLogger> MyLogger::Create(const bool isDebug) {
+    return {new MyLogger(isDebug), Deleter()};
 }
 
 std::string MyLogger::GetLevelString(const LogLevel level) {
@@ -36,9 +34,9 @@ int MyLogger::WriteLog(const LogLevel level, const std::string& message) {
 }
 
 std::string MyLogger::CurrentTime() {
-    auto now=std::chrono::system_clock::now();
-    std::time_t now_time_t=std::chrono::system_clock::to_time_t(now);
-    std::tm now_tm=*std::localtime(&now_time_t);
+    const auto now=std::chrono::system_clock::now();
+    const std::time_t now_time_t=std::chrono::system_clock::to_time_t(now);
+    const std::tm now_tm=*std::localtime(&now_time_t);
 
     std::ostringstream oss;
     oss<<std::put_time(&now_tm, "%Y-%m-%d %H:%M:%S");

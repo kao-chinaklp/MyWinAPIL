@@ -15,6 +15,7 @@ add_executable(MyWinAPIL ${SOURCES} mainTest.cpp)
 
 target_include_directories(MyWinAPIL PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(MyWinAPIL PRIVATE MyThreadPool ws2_32)
+#target_link_libraries(MyWinAPIL PRIVATE ws2_32)
 
 # Main configurations
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
