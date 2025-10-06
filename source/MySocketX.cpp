@@ -1,17 +1,27 @@
 #include "MySocketX.h"
 
+#include <utility>
 #include <vector>
+#include <unordered_map>
 #include <ws2tcpip.h>
 
 typedef struct {
-    HANDLE* iocp;
-    void (*Process)(void *);
+    void* data;
+    MySocketX* self;
 }ConnectionData;
 
 typedef struct {
     std::string message;
-    MySocketX::LPPER_HANDLE_DATA handleData;
+    MySocketX::LPPER_HANDLE_DATA handleData{};
 }UserData;
+
+struct ClientInfo {
+    SOCKET socket;
+    ClientID clientId;
+    MySocketX::LPPER_HANDLE_DATA handleData; // IOCP句柄
+
+    void* userData; // 用户自定义数据
+};
 
 class MySocketX::MySocketXImpl {
     public:
@@ -45,10 +55,69 @@ class MySocketX::MySocketXImpl {
 
         SocketType& getSocketType()  {return socketType;}
         IPType& getIPType() {return ipType;}
+        CRITICAL_SECTION& getClientMapLock() {return clientMapLock;}
 
-        void Log(const LogLevel level, const std::string& msg) {logger->WriteLog(level, msg);}
-        void StartThread(void (*Function)(void*), void (*Process)(void*)) {
-            connections.resize(maxWorkers, {&iocp, Process});
+        std::unordered_map<ClientID, ClientInfo>& getClientMap() {return clientMap;}
+        std::unordered_map<SOCKET, ClientID>& getSocket2IDMap() {return socket2IDMap;}
+
+        bool registerClient(SOCKET sock, ClientID id, void* data=nullptr) {
+            EnterCriticalSection(&clientMapLock);
+
+            auto handleData=static_cast<LPPER_HANDLE_DATA>(malloc(sizeof(PER_HANDLE_DATA)));
+            if (handleData==nullptr) {
+                LeaveCriticalSection(&clientMapLock);
+                return false;
+            }
+
+            ZeroMemory(handleData, sizeof(PER_HANDLE_DATA));
+            handleData->socket=sock;
+
+            if (!CreateIoCompletionPort((HANDLE)INVALID_HANDLE_VALUE, nullptr, reinterpret_cast<ULONG_PTR>(handleData), 0)) {
+                free(handleData);
+                LeaveCriticalSection(&clientMapLock);
+                return false;
+            }
+
+            // 添加映射
+            ClientInfo clientInfo{};
+            clientInfo.socket=sock;
+            clientInfo.clientId=id;
+            clientInfo.handleData=handleData;
+            clientInfo.userData=data;
+
+            clientMap[id]=clientInfo;
+            socket2IDMap[sock]=id;
+
+            free(handleData);
+            LeaveCriticalSection(&clientMapLock);
+            return true;
+        }
+
+        void unregisterClient(ClientID id) {
+            EnterCriticalSection(&clientMapLock);
+
+            auto it=clientMap.find(id);
+            if (it!=clientMap.end()) {
+                SOCKET sock=it->second.socket;
+                clientMap.erase(it);
+                socket2IDMap.erase(sock);
+                free(it->second.handleData);
+            }
+
+            LeaveCriticalSection(&clientMapLock);
+        }
+
+        ClientID getClientID(SOCKET sock) {
+            EnterCriticalSection(&clientMapLock);
+            auto it=socket2IDMap.find(sock);
+            ClientID id=(it!=socket2IDMap.end())?it->second:-1;
+            LeaveCriticalSection(&clientMapLock);
+            return id;
+        }
+
+        void Log(const LogLevel level, const std::string& msg) {MyLogger::WriteLog(level, msg);}
+        void StartThread(void (*Function)(void*), MySocketX* self) {
+            connections.resize(maxWorkers, {&iocp, self});
             for (int i=1;i<=maxWorkers;++i)
                 threadPool->PushJob(Function, &(connections[i-1]));
         }
@@ -71,12 +140,20 @@ class MySocketX::MySocketXImpl {
 
         unsigned maxWorkers;
         std::vector<ConnectionData> connections;
+
+        std::unordered_map<ClientID, ClientInfo> clientMap;
+        std::unordered_map<SOCKET, ClientID> socket2IDMap;
+        CRITICAL_SECTION clientMapLock{}; // 保护clientMap和socket2IDMap的锁
 };
+
+void MySocketX::Deleter::operator()(const MySocketXImpl *p) const {
+    delete p;
+}
 
 const std::string MySocketX::eof = "\r\n\r\n"; // 结束符
 
-MySocketX::MySocketX(std::shared_ptr<MyLogger> logger) {
-    impl=std::make_unique<MySocketXImpl>(std::move(logger));
+MySocketX::MySocketX(const std::shared_ptr<MyLogger>& logger) {
+    impl=std::unique_ptr<MySocketXImpl, Deleter>(new MySocketXImpl(logger));
 }
 
 MySocketX::~MySocketX() {
@@ -186,7 +263,7 @@ bool MySocketX::Create(const ProtocolType protocolType, const std::string& IP, u
     return true;
 }
 
-bool MySocketX::Start(void (*Function)(void *), void* data) {
+bool MySocketX::Start(void* data) {
     // 服务端实现
     if (impl->getSocketType()==SocketType::server) {
         auto& clientSocket=impl->getClientSocket();
@@ -197,7 +274,7 @@ bool MySocketX::Start(void (*Function)(void *), void* data) {
         HANDLE completionPort=impl->getIOCP();
         DWORD flags=0;
 
-        impl->StartThread(Work, Function);
+        impl->StartThread(Work, this);
 
         // 监听端口
         if (listen(impl->getListenSocket(), SOMAXCONN)==SOCKET_ERROR) {
@@ -214,7 +291,7 @@ bool MySocketX::Start(void (*Function)(void *), void* data) {
                 clientSocket=accept(listenSocket, reinterpret_cast<SOCKADDR*>(&impl->getClientAddr6()), &clientAddrSize);
 
             if (clientSocket==INVALID_SOCKET) {
-                impl->Log(LogLevel::Error, "accept failed: "+std::to_string(WSAGetLastError()));
+                impl->Log(LogLevel::Info, "accept failed: "+std::to_string(WSAGetLastError()));
                 continue; // 继续等待连接
             }
 
@@ -233,6 +310,9 @@ bool MySocketX::Start(void (*Function)(void *), void* data) {
             lpIoData->bytesSent=0;
             lpIoData->socket=clientSocket;
             flags=0;
+
+            // 保存连接
+            SaveClientInfo(clientSocket, data);
 
             // 投递接收请求
             if (WSARecv(clientSocket, &(lpIoData->wsabuf), 1, &(lpIoData->bytesReceived), &flags,
@@ -273,10 +353,85 @@ bool MySocketX::Start(void (*Function)(void *), void* data) {
         impl->Log(LogLevel::Info, "Connected successfully.");
 
         // 数据处理（自定义）
-        Function(data);
+        Process();
     }
 
     return true;
+}
+
+bool MySocketX::SendTo(const std::string& data, ClientID id) {
+    EnterCriticalSection(&impl->getClientMapLock());
+
+    auto it=impl->getClientMap().find(id);
+    if (it==impl->getClientMap().end()) {
+        LeaveCriticalSection(&impl->getClientMapLock());
+        impl->Log(LogLevel::Error, "Client ID not found: "+std::to_string(id));
+        return false;
+    }
+
+    ClientInfo& clientInfo=it->second;
+    auto lpIoData=static_cast<LPPER_IO_DATA>(malloc(sizeof(PER_IO_DATA)));
+    if (lpIoData==nullptr) {
+        LeaveCriticalSection(&impl->getClientMapLock());
+        impl->Log(LogLevel::Error, "Memory allocation failed for PER_IO_DATA.");
+        free(lpIoData);
+        return false;
+    }
+
+    ZeroMemory(&(lpIoData->overlapped), sizeof(WSAOVERLAPPED));
+
+    if (data.size()>1020) {
+        LeaveCriticalSection(&impl->getClientMapLock());
+        impl->Log(LogLevel::Error, "Data size exceeds limit: "+std::to_string(data.size()));
+        free(lpIoData);
+        return false;
+    }
+
+    memccpy(lpIoData->buffer, data.c_str(), sizeof(lpIoData->buffer), data.length());
+    lpIoData->wsabuf.buf=lpIoData->buffer;
+    lpIoData->wsabuf.len=static_cast<ULONG>(data.length());
+    lpIoData->state=ProcessState::SEND;
+
+    LeaveCriticalSection(&impl->getClientMapLock());
+
+    DWORD bytesWritten=0;
+    if (WSASend(clientInfo.socket, &(lpIoData->wsabuf), 1, &bytesWritten, 0,
+        &(lpIoData->overlapped), nullptr)==SOCKET_ERROR) {
+        if (WSAGetLastError()!=WSA_IO_PENDING) {
+            impl->Log(LogLevel::Error, "WSASend failed: "+std::to_string(WSAGetLastError()));
+            free(lpIoData);
+            return false;
+        }
+    }
+
+    impl->Log(LogLevel::Info, "Send successfully (ClientID: "+std::to_string(id)+").");
+    return true;
+}
+
+void MySocketX::SaveClientInfo(SOCKET sock, void *extraData) {
+    OnConnect(sock, extraData);
+
+    static ClientID nextClientID=1; // 静态变量，初始值为1
+
+    ClientID clientId=nextClientID++;
+
+    if (impl->registerClient(sock, clientId, extraData)) {
+        impl->Log(LogLevel::Info, "Client ID: "+std::to_string(clientId) + " connected.");
+    }
+    else {
+        impl->Log(LogLevel::Error, "Failed to register client.");
+        closesocket(sock);
+    }
+}
+
+void MySocketX::BroadCast(const std::string& data) {
+    EnterCriticalSection(&impl->getClientMapLock());
+
+    for (const auto& [id, clientInfo] : impl->getClientMap()) {
+        SendTo(data, id);
+    }
+
+    LeaveCriticalSection(&impl->getClientMapLock());
 }
 
 void MySocketX::Close() {
@@ -300,11 +455,52 @@ void MySocketX::Close() {
     WSACleanup();
 }
 
-void MySocketX::Work(void* data) {
-    // Demo
-    auto* connectionData=static_cast<ConnectionData *>(data);
+void MySocketX::OnConnect(SOCKET sock, void* data) {
+    // 用户可重写此方法以处理新连接
+    // data 为用户自定义数据，会加入到 ClientInfo 结构体中
 
-    HANDLE completionPort=connectionData->iocp;
+    impl->Log(LogLevel::Info, "New client connected (Socket: "+std::to_string(sock)+").");
+}
+
+bool MySocketX::OnSend(SOCKET sock, void* data) {
+    // 用户可重写此方法以处理发送完成
+    impl->Log(LogLevel::Info, "Data sent to socket: "+std::to_string(sock));
+
+    return SendTo(*(static_cast<std::string*>(data)), impl->getClientID(sock));
+}
+
+bool MySocketX::OnReceive(SOCKET sock, void* data) {
+    // 用户可重写此方法以处理接收到的数据
+    impl->Log(LogLevel::Info, "Data received from socket: "+std::to_string(sock));
+
+    return true;
+}
+
+void MySocketX::Process() {
+    // 用户可重写此方法以处理客户端数据
+    char buffer[DATA_SIZE];
+    int bytesReceived;
+    while (true) {
+        bytesReceived=recv(impl->getClientSocket(), buffer, DATA_SIZE, 0);
+        if (bytesReceived>0) {
+            std::string data(buffer, bytesReceived);
+            impl->Log(LogLevel::Info, "Data received: "+data);
+        }
+        else if (bytesReceived==0) {
+            impl->Log(LogLevel::Info, "Server closed the connection.");
+            break;
+        }
+        else {
+            impl->Log(LogLevel::Error, "recv failed: "+std::to_string(WSAGetLastError()));
+            break;
+        }
+    }
+}
+
+void MySocketX::Work(void* data) {
+    auto* connectionData=static_cast<ConnectionData*>(data);
+
+    HANDLE completionPort=*static_cast<HANDLE *>(connectionData->data);
     DWORD transferredBytes;
     ULONG_PTR completionKey;
     LPPER_IO_DATA lpIoData;
@@ -347,12 +543,7 @@ void MySocketX::Work(void* data) {
 
         while (continueProcessing) {
             switch (lpIoData->state) {
-                case ProcessState::AUTH:
-                    // 这里可以添加认证逻辑
-                    lpIoData->state=ProcessState::PROCESS;
-                    break;
-
-                case ProcessState::PROCESS:
+                case ProcessState::RECEIVE:
                     if (lpIoData->accumulatedData.size()<4) break;
 
                     // 处理数据
@@ -364,12 +555,17 @@ void MySocketX::Work(void* data) {
 
                     // 处理完整数据
                     userData={lpIoData->accumulatedData, handleData};
-                    connectionData->Process(&userData); // 自定义处理函数
+                    connectionData->self->OnReceive(handleData->socket, &userData);
 
                     // 移除已处理的数据
                     lpIoData->accumulatedData.erase(
                         lpIoData->accumulatedData.begin(),
                         lpIoData->accumulatedData.begin()+dataSize + 4);
+                    break;
+
+                case ProcessState::SEND:
+                    SendTo(lpIoData->accumulatedData, userData.handleData->socket);
+                    lpIoData->accumulatedData.clear();
                     break;
 
                 case ProcessState::CLOSE:
@@ -380,9 +576,12 @@ void MySocketX::Work(void* data) {
                     free(handleData);
                     free(lpIoData);
                     break;
+
+                default: break;
             }
 
-            if (lpIoData->state==ProcessState::PROCESS&&lpIoData->accumulatedData.size()<4)
+            if (lpIoData->state==ProcessState::RECEIVE&&lpIoData->accumulatedData.size()<4||
+                lpIoData->state==ProcessState::SEND)
                 continueProcessing=false;
         }
 

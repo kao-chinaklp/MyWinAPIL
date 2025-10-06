@@ -7,6 +7,8 @@
 
 #include "MyLogger.h"
 
+#define DATA_SIZE 1024
+
 enum class ProtocolType {
     TCP,
     UDP
@@ -23,21 +25,32 @@ enum class SocketType {
 };
 
 enum class ProcessState {
-    AUTH,
-    PROCESS,
+    DEFAULT,
+    SEND,
+    RECEIVE,
     CLOSE
 };
 
+typedef ui ClientID;
+
 class MySocketX {
     public:
-        explicit MySocketX(std::shared_ptr<MyLogger> logger=nullptr);
+        explicit MySocketX(const std::shared_ptr<MyLogger>& logger=nullptr);
         ~MySocketX();
 
         static bool Initialize();
         static bool Create(ProtocolType protocolType, const std::string& IP, unsigned port,
             SocketType socketType, IPType ipType=IPType::IPv4);
-        static bool Start(void (*Function)(void *), void* data=nullptr);
+        bool Start(void* extraData=nullptr);
+        void SaveClientInfo(SOCKET sock, void* extraData=nullptr);
+        static bool SendTo(const std::string& data, ClientID id=0);
+        static void BroadCast(const std::string& data);
         static void Close();
+
+        virtual void OnConnect(SOCKET sock, void* data);
+        virtual bool OnSend(SOCKET sock, void* data);
+        virtual bool OnReceive(SOCKET sock, void* data);
+        virtual void Process(); // For client
 
     private:
         static void Work(void* data);
@@ -48,21 +61,26 @@ class MySocketX {
         }PER_HANDLE_DATA, *LPPER_HANDLE_DATA;
 
         typedef struct {
-            OVERLAPPED overlapped;
+            WSAOVERLAPPED overlapped;
             WSABUF wsabuf;
-            char* buffer=new char[1024];
+            char* buffer=new char[DATA_SIZE];
             DWORD bytesReceived;
             DWORD bytesSent;
             SOCKET socket;
             std::string accumulatedData;
-            ProcessState state=ProcessState::AUTH;
+            ProcessState state=ProcessState::DEFAULT;
+            ClientID clientId;
         }PER_IO_DATA, *LPPER_IO_DATA;
 
         static const std::string eof;
 
     private:
+
         class MySocketXImpl;
-        static inline std::unique_ptr<MySocketXImpl> impl;
+        struct Deleter {
+            void operator()(const MySocketXImpl* p) const;
+        };
+        static inline std::unique_ptr<MySocketXImpl, Deleter> impl;
 };
 
 #endif //MYSOCKETX_H
